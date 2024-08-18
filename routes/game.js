@@ -4,6 +4,7 @@ const router = express.Router();
 
 const callChatGPT = require('../utils/openai');
 const { getSpotifyToken, searchSongOnSpotify, checkSongAvailability } = require('../utils/spotify');
+const { logMessage } = require('../utils/logger');
 
 
 // Utiliser un simple stockage en mémoire pour l'état du jeu (pour développement)
@@ -26,16 +27,18 @@ router.post('/start-game', async (req, res) => {
   gameStates[gameId] = gameState;
 
   try {
+    logMessage(`Starting new game with ID: ${gameId}`);
     const messages = [
       { role: "user", content: `L'utilisateur a démarré le jeu, accueille le et propose lui de choisir un thème pour cette partie.` }
     ];
 
     const gptAnswer = await callChatGPT(messages);
 
-    res.json({ message: 'Game started', gameId, gptAnswer, gameState });
+    logMessage(`Game started successfully. GPT Answer: ${gptAnswer}`);
+    return res.json({ message: 'Game started', gameId, gptAnswer, gameState });
   } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ error: 'Failed to process the theme' });
+    logMessage(`Error starting game: ${error.message}`, 'error');
+    return res.status(500).json({ error: 'Failed to process the theme' });
   }
 });
 
@@ -44,16 +47,17 @@ router.post('/choose-theme', async (req, res) => {
   const gameState = gameStates[gameId];
 
   if (!gameState) {
+    logMessage('Game not found', 'error');
     return res.status(404).json({ error: 'Game not found' });
   }
 
   if (gameState.gameStep !== 'CHOOSE_THEME') {
+    logMessage('Invalid game step for choosing theme', 'error');
     return res.status(400).json({ error: 'Theme already chosen or invalid game state' });
   }
-
-  console.log('User chose theme:', theme);
   
   try {
+    logMessage(`User chose theme: ${theme} for game ID: ${gameId}`);
     const messages = [
     { role: "system", content: `L'utilisateur va choisir un thème pour le blind test musical. Tu dois extraire le thème choisi pour le redonner dans ta réponse.
       Tu dois informer l'utilisateur qu'il peut maintenant lancer la partie en appuyent sur le bouton depuis l'interface.
@@ -82,9 +86,8 @@ router.post('/choose-theme', async (req, res) => {
     let parsedAnswer;
     try {
       parsedAnswer = JSON.parse(gptAnswer);
-      console.log('Parsed GPT answer:', parsedAnswer);
     } catch (error) {
-      console.error('Failed to parse GPT answer as JSON:', gptAnswer);
+      logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
       return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
     }
     
@@ -93,10 +96,10 @@ router.post('/choose-theme', async (req, res) => {
     gameState.theme = extractedTheme;
     gameState.gameStep = 'THEME_CHOSEN';
 
+    logMessage(`Theme chosen successfully: ${extractedTheme}`);
     return res.json({ message: 'Theme chosen', gptAnswer: parsedAnswer.texte, gameState });
-
   } catch (error) {
-    console.error(error.message);
+    logMessage(`Failed to process the theme: ${error.message}`, 'error');
     res.status(500).json({ error: 'Failed to process the theme' });
   }
 });
@@ -107,10 +110,12 @@ router.post('/start-song', async (req, res) => {
   const gameState = gameStates[gameId];
 
   if (!gameState) {
+    logMessage('Game not found', 'error');
     return res.status(404).json({ error: 'Game not found' });
   }
 
   if (gameState.gameStep === 'CHOOSE_THEME') {
+    logMessage('Theme not chosen before starting song', 'error');
     return res.status(400).json({ error: 'You must choose a theme first' });
   }
 
@@ -150,16 +155,14 @@ router.post('/start-song', async (req, res) => {
           Ne rejoue pas ces musiques que tu as déjà jouées: ${alreadyPlayedTracksText || 'aucune pour le moment'}.
           N'utilise pas ces musiques qui sont indisponibles: ${unavailableTracksText}` }
       ];
-      console.log('Messages sent to GPT:', messages);
 
       const gptAnswer = await callChatGPT(messages);
 
       let parsedAnswer;
       try {
         parsedAnswer = JSON.parse(gptAnswer);
-        console.log('Parsed GPT answer:', parsedAnswer);
       } catch (error) {
-        console.error('Failed to parse GPT answer as JSON:', gptAnswer);
+        logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
         return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
       }
 
@@ -175,6 +178,7 @@ router.post('/start-song', async (req, res) => {
           gameState.songCount += 1;
           gameState.gameStep = 'PLAY_CLIP';
 
+          logMessage(`Song found and ready to play: ${artiste} - ${titre}`);
           return res.json({
             message: 'Song is ready to play!',
             trackUrl: track.preview_url,
@@ -184,12 +188,12 @@ router.post('/start-song', async (req, res) => {
         }
         else {
           unavailableTracks.push({ artiste, titre });
-          console.log(`Track not available: ${artiste} - ${titre}. Requesting another song.`);
+          logMessage(`Track not available on Spotify: ${artiste} - ${titre}. Requesting another song.`);
         }
       }
     }
   } catch (error) {
-    console.error(error.message);
+    logMessage(`Error starting song: ${error.message}`, 'error');
     return res.status(500).json({ error: 'Failed to start the song' });
   }
 });
@@ -200,12 +204,14 @@ router.post('/guess-answer', async (req, res) => {
   const gameState = gameStates[gameId];
 
   if (!gameState) {
+    logMessage('Game not found', 'error');
     return res.status(404).json({ error: 'Game not found' });
   }
 
   const { artiste, titre } = gameState.currentSong;
 
   if (!artiste || !titre) {
+    logMessage('No song is currently being played', 'error');
     return res.status(400).json({ error: 'No song is currently being played.' });
   }
 
@@ -213,6 +219,7 @@ router.post('/guess-answer', async (req, res) => {
   console.log('Current song:', gameState.currentSong);
 
   try {
+    logMessage(`User submitted an answer for song: ${artiste} - ${titre}`);
     const messages = [
       { role: "system", content: `
         L'extrait a deviner est ${titre} de ${artiste}. Tu dois évaluer si la réponse est correcte ou non et si elle est complète ou non.
@@ -241,9 +248,8 @@ router.post('/guess-answer', async (req, res) => {
     let parsedAnswer;
     try {
       parsedAnswer = JSON.parse(gptAnswer);
-      console.log('Parsed GPT answer:', parsedAnswer);
     } catch (error) {
-      console.error('Failed to parse GPT answer as JSON:', gptAnswer);
+      logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
       return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
     }
 
@@ -251,66 +257,17 @@ router.post('/guess-answer', async (req, res) => {
     gameState.points += pointsEarned;
 
     if (pointsEarned>0) {
+      logMessage(`User guessed correctly, points earned: ${pointsEarned}`);
       return res.json({ message: 'Correct! You guessed the song.', gptAnswer, success: true, points: gameState.points });
     } else {
+      logMessage('User guessed incorrectly');
       return res.json({ message: 'Incorrect. Try again!', gptAnswer, success: false, points: gameState.points });
     }
   } catch (error) {
-    console.error('Error communicating with OpenAI:', error.response ? error.response.data : error.message);
+    logMessage(`Error processing answer: ${error.message}`, 'error');
     res.status(500).json({ error: 'Failed to process the answer' });
   }
 
 });
-
-// Endpoint pour jouer une chanson
-router.post('/play-song', async (req, res) => {
-    const { artist, title } = req.body;
-  
-    try {
-      const accessToken = await getSpotifyToken();
-  
-      // Rechercher la chanson sur Spotify
-      const spotifyResponse = await axios.get('https://api.spotify.com/v1/search', {
-        params: {
-          q: `artist:${artist} track:${title}`,
-          type: 'track',
-          limit: 1
-        },
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
-  
-      const track = spotifyResponse.data.tracks.items[0];
-  
-      if (track && track.preview_url) {
-        res.json({ trackUrl: track.preview_url });
-      } else {
-        console.error('No preview available for this track, asking GPT for another one.');
-        askForNewExtract(res);
-      }
-    } catch (error) {
-      console.error('Error searching for song:', error);
-      askForNewExtract(res);
-    }
-});
-
-// Fonction pour demander un nouvel extrait à GPT
-const askForNewExtract = async (res) => {
-    try {
-      const messages = [
-        { role: "system", content: "Tu es un animateur de jeu de blindtest. Demande à l'utilisateur de deviner le titre de la chanson et l'artiste, et donne un retour sur la réponse." },
-        { role: "user", content: "L'extrait précédent n'est pas disponible, propose un autre extrait de chanson." }
-      ];
-    
-      const gptAnswer = await callChatGPT(messages);
-  
-      res.json({ message: 'New song suggested by GPT', gptAnswer });
-  
-    } catch (error) {
-      console.error('Error communicating with OpenAI:', error.response ? error.response.data : error.message);
-      res.status(500).json({ error: 'Failed to get a new extract' });
-    }
-};
 
 module.exports = router;
