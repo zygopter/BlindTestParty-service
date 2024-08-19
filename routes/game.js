@@ -258,10 +258,10 @@ router.post('/guess-answer', async (req, res) => {
 
     if (pointsEarned>0) {
       logMessage(`User guessed correctly, points earned: ${pointsEarned}`);
-      return res.json({ message: 'Correct! You guessed the song.', gptAnswer, success: true, points: gameState.points });
+      return res.json({ message: 'Correct! You guessed the song.', parsedAnswer, success: true, points: gameState.points });
     } else {
       logMessage('User guessed incorrectly');
-      return res.json({ message: 'Incorrect. Try again!', gptAnswer, success: false, points: gameState.points });
+      return res.json({ message: 'Incorrect. Try again!', parsedAnswer, success: false, points: gameState.points });
     }
   } catch (error) {
     logMessage(`Error processing answer: ${error.message}`, 'error');
