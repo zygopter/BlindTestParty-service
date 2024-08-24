@@ -21,7 +21,8 @@ router.post('/start-game', async (req, res) => {
     theme: '',
     songHistory: [],
     gameStep: 'CHOOSE_THEME',
-    maxSongs: 5
+    maxSongs: 5,
+    guessedItems: {}
   };
 
   gameStates[gameId] = gameState;
@@ -177,6 +178,7 @@ router.post('/start-song', async (req, res) => {
           gameState.songHistory.push({ artiste, titre });
           gameState.songCount += 1;
           gameState.gameStep = 'PLAY_CLIP';
+          gameState.guessedItems = {};
 
           logMessage(`Song found and ready to play: ${artiste} - ${titre}`);
           return res.json({
@@ -222,20 +224,110 @@ router.post('/guess-answer', async (req, res) => {
     logMessage(`User submitted an answer for song: ${artiste} - ${titre}`);
     const messages = [
       { role: "system", content: `
-        L'extrait a deviner est ${titre} de ${artiste}. Tu dois évaluer si la réponse est correcte ou non et si elle est complète ou non.
-        Une réponse complète (artiste et titre) vaut 3 points, une réponse incomplète vaut 1 point, une réponse fausse vaut 0 point.
-        Ta réponse doit être formatée en JSON de manière concise et précise.
+        L'extrait à deviner est ${titre} de ${artiste}. 
+        Tu dois évaluer si la réponse est correcte, partielle ou incorrecte.
+        Une réponse complète (artiste et titre) vaut 3 points,
+        une réponse partielle vaut 1 point, et une réponse incorrecte vaut 0 point.
+        Si la réponse est partielle, encourage l'utilisateur à compléter sa réponse.
+        La réponse doit être formatée en JSON de manière concise et précise.
         Le format de la réponse doit être :
+        {
+          "texte": "Texte que le présentateur doit dire.",
+          "pointsEarned": number_of_points_earned,
+          "guessedItems": {
+              "artiste": true_or_false,
+              "titre": true_or_false
+          }
+        }
+        Exemple:
+        {
+          "texte": "Bravo, vous avez trouvé le titre ! Il ne manque plus que l'artiste.",
+          "pointsEarned": 1,
+          "guessedItems": {
+            "artiste": false,
+            "title": true
+          }
+        }`
+      },
+      { role: "user", content: userAnswer }
+    ];
+  
+    const gptAnswer = await callChatGPT(messages);
 
+    // Extraire l'artiste et le titre de la réponse de GPT
+    let parsedAnswer;
+    try {
+      parsedAnswer = JSON.parse(gptAnswer);
+    } catch (error) {
+      logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
+      return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
+    }
+
+    if (!parsedAnswer.guessedItems.artiste && !parsedAnswer.guessedItems.title) {
+      logMessage('User guessed incorrectly');
+      return res.json({ message: 'Incorrect. Try again!', parsedAnswer, success: false, points: gameState.points });
+    } else if (!parsedAnswer.guessedItems.artiste || !parsedAnswer.guessedItems.title) {
+      logMessage(`User guessed partially, let's try again`);
+      gameState.guessedItems = parsedAnswer.guessedItems;
+      return res.json({ message: 'Partial answer, encourage user to complete.', parsedAnswer, success: false, points: gameState.points });
+    } else {
+      logMessage(`User guessed correctly, points earned: ${pointsEarned}`);
+      const pointsEarned = parsedAnswer.pointsEarned;
+      gameState.points += pointsEarned;
+      return res.json({ message: 'Correct! You guessed the song.', parsedAnswer, success: true, points: gameState.points });
+    }
+  } catch (error) {
+    logMessage(`Error processing answer: ${error.message}`, 'error');
+    res.status(500).json({ error: 'Failed to process the answer' });
+  }
+
+});
+
+// Endpoint pour compléter une réponse
+router.post('/complete-answer', async (req, res) => {
+  const { gameId, userAnswer } = req.body;
+  const gameState = gameStates[gameId];
+
+  if (!gameState) {
+    logMessage('Game not found', 'error');
+    return res.status(404).json({ error: 'Game not found' });
+  }
+
+  const { artiste, titre } = gameState.currentSong;
+
+  if (!artiste || !titre) {
+    logMessage('No song is currently being played', 'error');
+    return res.status(400).json({ error: 'No song is currently being played.' });
+  }
+
+  console.log('Checking user answer:', userAnswer);
+  console.log('Current song:', gameState.currentSong);
+
+  try {
+    logMessage(`User submitted an answer for song: ${artiste} - ${titre}`);
+    let alreadyGuessedMessage = "";
+    if (gameState.guessedItems.artiste) {
+      alreadyGuessedMessage = `L'utilisateur a déjà deviné l'artiste: ${gameState.guessedItems.artiste}, il doit encore donner le titre.`;
+    } else if (gameState.guessedItems.titre) {
+      alreadyGuessedMessage = `L'utilisateur a déjà deviné le titre: ${gameState.guessedItems.titre}, il doit encore donner l'artiste.`;
+    }
+    const messages = [
+      { role: "system", content: `
+        L'extrait à deviner est ${titre} de ${artiste}.
+        Tu dois évaluer si la réponse est correcte, partielle ou incorrecte.
+        Une réponse complète (artiste et titre) vaut 3 points,
+        une réponse partielle vaut 1 point, et une réponse incorrecte vaut 0 point.
+        ${alreadyGuessedMessage}
+        Si au final la réponse reste incomplète ou incorrecte, révèle la réponse attendue.
+        La réponse doit être formatée en JSON de manière concise et précise.
+        Le format de la réponse doit être :
         {
           "texte": "Texte que le présentateur doit dire.",
           "pointsEarned": number_of_points_earned
         }
-
-        Par exemple, une réponse pourrait ressembler à ceci :
-
+        Exemple:
         {
-          "texte": "Bravo vous avez trouvez la réponse en partie !",
+          "texte": "Bravo, vous avez trouvé au moins trouvé le titre ! Il manque l'artiste qui était "Kenny Loggins". Tu as gagné 1 point!",
           "pointsEarned": 1
         }`
       },
@@ -256,12 +348,12 @@ router.post('/guess-answer', async (req, res) => {
     const pointsEarned = parsedAnswer.pointsEarned;
     gameState.points += pointsEarned;
 
-    if (pointsEarned>0) {
+    if (pointsEarned > 0) {
       logMessage(`User guessed correctly, points earned: ${pointsEarned}`);
-      return res.json({ message: 'Correct! You guessed the song.', parsedAnswer, success: true, points: gameState.points });
+      return res.json({ message: 'Correct! You guessed the song.', gptAnswer, success: true, points: gameState.points });
     } else {
       logMessage('User guessed incorrectly');
-      return res.json({ message: 'Incorrect. Try again!', parsedAnswer, success: false, points: gameState.points });
+      return res.json({ message: 'Incorrect. Try again!', gptAnswer, success: false, points: gameState.points });
     }
   } catch (error) {
     logMessage(`Error processing answer: ${error.message}`, 'error');
