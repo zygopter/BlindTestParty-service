@@ -158,12 +158,13 @@ router.post('/start-song', async (req, res) => {
       ];
 
       const gptAnswer = await callChatGPT(messages);
+      const cleanedGptAnswer = cleanJsonString(gptAnswer);
 
       let parsedAnswer;
       try {
-        parsedAnswer = JSON.parse(gptAnswer);
+        parsedAnswer = JSON.parse(cleanedGptAnswer);
       } catch (error) {
-        logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
+        logMessage(`Failed to parse GPT answer as JSON: ${cleanedGptAnswer}`, 'error');
         return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
       }
 
@@ -253,13 +254,14 @@ router.post('/guess-answer', async (req, res) => {
     ];
   
     const gptAnswer = await callChatGPT(messages);
+    const cleanedGptAnswer = cleanJsonString(gptAnswer);
 
     // Extraire l'artiste et le titre de la réponse de GPT
     let parsedAnswer;
     try {
-      parsedAnswer = JSON.parse(gptAnswer);
+      parsedAnswer = JSON.parse(cleanedGptAnswer);
     } catch (error) {
-      logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
+      logMessage(`Failed to parse GPT answer as JSON: ${cleanedGptAnswer}`, 'error');
       return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
     }
 
@@ -335,13 +337,14 @@ router.post('/complete-answer', async (req, res) => {
     ];
   
     const gptAnswer = await callChatGPT(messages);
+    const cleanedGptAnswer = cleanJsonString(gptAnswer);
 
     // Extraire l'artiste et le titre de la réponse de GPT
     let parsedAnswer;
     try {
-      parsedAnswer = JSON.parse(gptAnswer);
+      parsedAnswer = JSON.parse(cleanedGptAnswer);
     } catch (error) {
-      logMessage(`Failed to parse GPT answer as JSON: ${gptAnswer}`, 'error');
+      logMessage(`Failed to parse GPT answer as JSON: ${cleanedGptAnswer}`, 'error');
       return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
     }
 
@@ -361,5 +364,15 @@ router.post('/complete-answer', async (req, res) => {
   }
 
 });
+
+const cleanJsonString = (jsonString) => {
+  // Utiliser une expression régulière pour remplacer uniquement les guillemets dans les valeurs
+  return jsonString.replace(/"([^"]+)":\s*"([^"]*)"/g, function(match, p1, p2) {
+    // Remplacer les guillemets à l'intérieur des valeurs par des guillemets simples
+    const cleanedValue = p2.replace(/"/g, "'");
+    return `"${p1}": "${cleanedValue}"`;
+  });
+};
+
 
 module.exports = router;
