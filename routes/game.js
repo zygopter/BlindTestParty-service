@@ -11,6 +11,7 @@ const { logMessage } = require('../utils/logger');
 let gameStates = {};
 let unavailableTracks = [];
 
+
 // Endpoint pour démarrer un nouveau jeu
 router.post('/start-game', async (req, res) => {
   const gameId = Date.now().toString(); // ID unique basé sur le timestamp
@@ -22,7 +23,8 @@ router.post('/start-game', async (req, res) => {
     songHistory: [],
     gameStep: 'CHOOSE_THEME',
     maxSongs: 5,
-    guessedItems: {}
+    guessedItems: {},
+    messageHistory: []
   };
 
   gameStates[gameId] = gameState;
@@ -32,8 +34,12 @@ router.post('/start-game', async (req, res) => {
     const messages = [
       { role: "user", content: `L'utilisateur a démarré le jeu, accueille le et propose lui de choisir un thème pour cette partie.` }
     ];
+    gameState.messageHistory.push({ role: "user", content: `L'utilisateur a démarré le jeu, accueille le et propose lui de choisir un thème pour cette partie.` });
 
-    const gptAnswer = await callChatGPT(messages);
+    const gptAnswer = await callChatGPT(gameState.messageHistory);
+    gameState.messageHistory.push(
+      { role: "assistant", content: gptAnswer}
+    );
 
     logMessage(`Game started successfully. GPT Answer: ${gptAnswer}`);
     return res.json({ message: 'Game started', gameId, gptAnswer, gameState });
@@ -81,8 +87,33 @@ router.post('/choose-theme', async (req, res) => {
     },
     { role: "user", content: `${theme}` }
     ];
+    gameState.messageHistory.push(
+      { role: "system", content: `L'utilisateur va choisir un thème pour le blind test musical. Tu dois extraire le thème choisi pour le redonner dans ta réponse.
+        Tu dois informer l'utilisateur qu'il peut maintenant lancer la partie en appuyent sur le bouton depuis l'interface.
+        Ta réponse doit être formatée en JSON de manière concise et précise.
+        Le format de la réponse doit être :
+        
+        {
+          "texte": "Texte que le présentateur doit dire.",
+          "theme": "Thème proposé par l'utilisateur"
+        }
+        
+        Par exemple, une réponse pourrait ressembler à ceci :
+        
+        {
+          "texte": "Vous avez choisi les années 80, j'adore ! Vous allez pouvoir démarrer la partie dès que vous êtes prèts en appuyant sur le bouton!",
+          "theme": "Années 80"
+        }
+        
+        Si l'utilisateur ne sait pas, choisis pour lui.`
+      },
+      { role: "user", content: `${theme}` }
+    );
     
-    const gptAnswer = await callChatGPT(messages);
+    const gptAnswer = await callChatGPT(gameState.messageHistory);
+    gameState.messageHistory.push(
+      { role: "assistant", content: gptAnswer}
+    );
 
     let parsedAnswer;
     try {
@@ -156,9 +187,40 @@ router.post('/start-song', async (req, res) => {
           Ne rejoue pas ces musiques que tu as déjà jouées: ${alreadyPlayedTracksText || 'aucune pour le moment'}.
           N'utilise pas ces musiques qui sont indisponibles: ${unavailableTracksText}` }
       ];
+      gameState.messageHistory.push(
+        { role: "system", content: `
+          L'utilisateur a choisi le thème ${gameState.theme}.
+          Ta réponse doit être formatée en JSON de manière concise et précise.
+          Le format de la réponse doit être :
 
-      const gptAnswer = await callChatGPT(messages);
+          {
+            "texte": "Texte que le présentateur doit dire.",
+            "extrait": {
+              "artiste": "Nom de l'artiste",
+              "titre": "Titre de la chanson"
+            }
+          }
+
+          Par exemple, une réponse pourrait ressembler à ceci :
+
+          {
+            "texte": "Voici le premier extrait, soyez prêts !",
+            "extrait": {
+              "artiste": "Kenny Loggins",
+              "titre": "Footloose"
+            }
+          }`
+        },
+        { role: "user", content: `Propose un extrait de chanson correspondant au thème. Tu en es au tour ${gameState.songCount+1} de cette partie.
+          Ne rejoue pas ces musiques que tu as déjà jouées: ${alreadyPlayedTracksText || 'aucune pour le moment'}.
+          N'utilise pas ces musiques qui sont indisponibles: ${unavailableTracksText}` }
+      );
+
+      const gptAnswer = await callChatGPT(gameState.messageHistory);
       const cleanedGptAnswer = cleanJsonString(gptAnswer);
+      gameState.messageHistory.push(
+        { role: "assistant", content: gptAnswer}
+      );
 
       let parsedAnswer;
       try {
@@ -246,15 +308,47 @@ router.post('/guess-answer', async (req, res) => {
           "pointsEarned": 1,
           "guessedItems": {
             "artiste": false,
-            "title": true
+            "titre": true
           }
         }`
       },
       { role: "user", content: userAnswer }
     ];
+    gameState.messageHistory.push(
+      { role: "system", content: `
+        L'extrait à deviner est ${titre} de ${artiste}. 
+        Tu dois évaluer si la réponse est correcte, partielle ou incorrecte.
+        Une réponse complète (artiste et titre) vaut 3 points,
+        une réponse partielle vaut 1 point, et une réponse incorrecte vaut 0 point.
+        Si la réponse est partielle, encourage l'utilisateur à compléter sa réponse.
+        La réponse doit être formatée en JSON de manière concise et précise.
+        Le format de la réponse doit être :
+        {
+          "texte": "Texte que le présentateur doit dire.",
+          "pointsEarned": number_of_points_earned,
+          "guessedItems": {
+              "artiste": true_or_false,
+              "titre": true_or_false
+          }
+        }
+        Exemple:
+        {
+          "texte": "Bravo, vous avez trouvé le titre ! Il ne manque plus que l'artiste.",
+          "pointsEarned": 1,
+          "guessedItems": {
+            "artiste": false,
+            "titre": true
+          }
+        }`
+      },
+      { role: "user", content: userAnswer }
+    );
   
-    const gptAnswer = await callChatGPT(messages);
+    const gptAnswer = await callChatGPT(gameState.messageHistory);
     const cleanedGptAnswer = cleanJsonString(gptAnswer);
+    gameState.messageHistory.push(
+      { role: "assistant", content: gptAnswer}
+    );
 
     // Extraire l'artiste et le titre de la réponse de GPT
     let parsedAnswer;
@@ -265,17 +359,17 @@ router.post('/guess-answer', async (req, res) => {
       return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
     }
 
-    if (!parsedAnswer.guessedItems.artiste && !parsedAnswer.guessedItems.title) {
+    if (!parsedAnswer.guessedItems.artiste && !parsedAnswer.guessedItems.titre) {
       logMessage('User guessed incorrectly');
       return res.json({ message: 'Incorrect. Try again!', parsedAnswer, success: false, points: gameState.points });
-    } else if (!parsedAnswer.guessedItems.artiste || !parsedAnswer.guessedItems.title) {
+    } else if (!parsedAnswer.guessedItems.artiste || !parsedAnswer.guessedItems.titre) {
       logMessage(`User guessed partially, let's try again`);
       gameState.guessedItems = parsedAnswer.guessedItems;
       return res.json({ message: 'Partial answer, encourage user to complete.', parsedAnswer, success: false, points: gameState.points });
     } else {
-      logMessage(`User guessed correctly, points earned: ${pointsEarned}`);
       const pointsEarned = parsedAnswer.pointsEarned;
       gameState.points += pointsEarned;
+      logMessage(`User guessed correctly, points earned: ${pointsEarned}`);
       return res.json({ message: 'Correct! You guessed the song.', parsedAnswer, success: true, points: gameState.points });
     }
   } catch (error) {
@@ -335,16 +429,46 @@ router.post('/complete-answer', async (req, res) => {
           "pointsEarned": 1,
           "guessedItems": {
             "artiste": false,
-            "title": true
+            "titre": true
           }
         }`
       },
       { role: "user", content: concatenatedUserAnswer }
     ];
-    logMessage(`Passing this messages to chatgpt: ${concatenatedUserAnswer}`);
+    gameState.messageHistory.push(
+      { role: "system", content: `
+        L'extrait à deviner est ${titre} de ${artiste}. 
+        Tu dois évaluer si la réponse est correcte, partielle ou incorrecte.
+        Une réponse complète (artiste et titre) vaut 3 points,
+        une réponse partielle vaut 1 point, et une réponse incorrecte vaut 0 point.
+        La réponse doit être formatée en JSON de manière concise et précise.
+        Le format de la réponse doit être :
+        {
+          "texte": "Texte que le présentateur doit dire.",
+          "pointsEarned": number_of_points_earned,
+          "guessedItems": {
+              "artiste": true_or_false,
+              "titre": true_or_false
+          }
+        }
+        Exemple:
+        {
+          "texte": "Bravo, vous avez trouvé le titre ! L'artiste était "Kenny Loggins".",
+          "pointsEarned": 1,
+          "guessedItems": {
+            "artiste": false,
+            "titre": true
+          }
+        }`
+      },
+      { role: "user", content: concatenatedUserAnswer }
+    );
     
-    const gptAnswer = await callChatGPT(messages);
+    const gptAnswer = await callChatGPT(gameState.messageHistory);
     const cleanedGptAnswer = cleanJsonString(gptAnswer);
+    gameState.messageHistory.push(
+      { role: "assistant", content: gptAnswer}
+    );
 
     // Extraire l'artiste et le titre de la réponse de GPT
     let parsedAnswer;
@@ -381,5 +505,12 @@ const cleanJsonString = (jsonString) => {
   });
 };
 
+// Endpoint to log message history
+router.post('/log-message-history', async (req, res) => {
+  const { gameId } = req.body;
+  const gameState = gameStates[gameId];
+  logMessage(gameState.messageHistory, 'info');
+  res.json({ history: gameState.messageHistory });
+});
 
 module.exports = router;
