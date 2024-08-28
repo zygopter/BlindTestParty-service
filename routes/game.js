@@ -31,9 +31,6 @@ router.post('/start-game', async (req, res) => {
 
   try {
     logMessage(`Starting new game with ID: ${gameId}`);
-    const messages = [
-      { role: "user", content: `L'utilisateur a démarré le jeu, accueille le et propose lui de choisir un thème pour cette partie.` }
-    ];
     gameState.messageHistory.push({ role: "user", content: `L'utilisateur a démarré le jeu, accueille le et propose lui de choisir un thème pour cette partie.` });
 
     const gptAnswer = await callChatGPT(gameState.messageHistory);
@@ -65,28 +62,6 @@ router.post('/choose-theme', async (req, res) => {
   
   try {
     logMessage(`User chose theme: ${theme} for game ID: ${gameId}`);
-    const messages = [
-    { role: "system", content: `L'utilisateur va choisir un thème pour le blind test musical. Tu dois extraire le thème choisi pour le redonner dans ta réponse.
-      Tu dois informer l'utilisateur qu'il peut maintenant lancer la partie en appuyent sur le bouton depuis l'interface.
-      Ta réponse doit être formatée en JSON de manière concise et précise.
-      Le format de la réponse doit être :
-      
-      {
-        "texte": "Texte que le présentateur doit dire.",
-        "theme": "Thème proposé par l'utilisateur"
-      }
-      
-      Par exemple, une réponse pourrait ressembler à ceci :
-      
-      {
-        "texte": "Vous avez choisi les années 80, j'adore ! Vous allez pouvoir démarrer la partie dès que vous êtes prèts en appuyant sur le bouton!",
-        "theme": "Années 80"
-      }
-      
-      Si l'utilisateur ne sait pas, choisis pour lui.`
-    },
-    { role: "user", content: `${theme}` }
-    ];
     gameState.messageHistory.push(
       { role: "system", content: `L'utilisateur va choisir un thème pour le blind test musical. Tu dois extraire le thème choisi pour le redonner dans ta réponse.
         Tu dois informer l'utilisateur qu'il peut maintenant lancer la partie en appuyent sur le bouton depuis l'interface.
@@ -159,34 +134,6 @@ router.post('/start-song', async (req, res) => {
       const alreadyPlayedTracksText = gameState.songHistory
         .map(track => `${track.artiste} - ${track.titre}`)
         .join(', ');
-      const messages = [
-        { role: "system", content: `
-          L'utilisateur a choisi le thème ${gameState.theme}.
-          Ta réponse doit être formatée en JSON de manière concise et précise.
-          Le format de la réponse doit être :
-
-          {
-            "texte": "Texte que le présentateur doit dire.",
-            "extrait": {
-              "artiste": "Nom de l'artiste",
-              "titre": "Titre de la chanson"
-            }
-          }
-
-          Par exemple, une réponse pourrait ressembler à ceci :
-
-          {
-            "texte": "Voici le premier extrait, soyez prêts !",
-            "extrait": {
-              "artiste": "Kenny Loggins",
-              "titre": "Footloose"
-            }
-          }`
-        },
-        { role: "user", content: `Propose un extrait de chanson correspondant au thème. Tu en es au tour ${gameState.songCount+1} de cette partie.
-          Ne rejoue pas ces musiques que tu as déjà jouées: ${alreadyPlayedTracksText || 'aucune pour le moment'}.
-          N'utilise pas ces musiques qui sont indisponibles: ${unavailableTracksText}` }
-      ];
       gameState.messageHistory.push(
         { role: "system", content: `
           L'utilisateur a choisi le thème ${gameState.theme}.
@@ -285,35 +232,6 @@ router.post('/guess-answer', async (req, res) => {
 
   try {
     logMessage(`User submitted an answer for song: ${artiste} - ${titre}`);
-    const messages = [
-      { role: "system", content: `
-        L'extrait à deviner est ${titre} de ${artiste}. 
-        Tu dois évaluer si la réponse est correcte, partielle ou incorrecte.
-        Une réponse complète (artiste et titre) vaut 3 points,
-        une réponse partielle vaut 1 point, et une réponse incorrecte vaut 0 point.
-        Si la réponse est partielle, encourage l'utilisateur à compléter sa réponse.
-        La réponse doit être formatée en JSON de manière concise et précise.
-        Le format de la réponse doit être :
-        {
-          "texte": "Texte que le présentateur doit dire.",
-          "pointsEarned": number_of_points_earned,
-          "guessedItems": {
-              "artiste": true_or_false,
-              "titre": true_or_false
-          }
-        }
-        Exemple:
-        {
-          "texte": "Bravo, vous avez trouvé le titre ! Il ne manque plus que l'artiste.",
-          "pointsEarned": 1,
-          "guessedItems": {
-            "artiste": false,
-            "titre": true
-          }
-        }`
-      },
-      { role: "user", content: userAnswer }
-    ];
     gameState.messageHistory.push(
       { role: "system", content: `
         L'extrait à deviner est ${titre} de ${artiste}. 
@@ -407,34 +325,6 @@ router.post('/complete-answer', async (req, res) => {
     } else if (gameState.guessedItems.titre) {
       concatenatedUserAnswer += ` et le titre est ${titre}.`;
     }
-    const messages = [
-      { role: "system", content: `
-        L'extrait à deviner est ${titre} de ${artiste}. 
-        Tu dois évaluer si la réponse est correcte, partielle ou incorrecte.
-        Une réponse complète (artiste et titre) vaut 3 points,
-        une réponse partielle vaut 1 point, et une réponse incorrecte vaut 0 point.
-        La réponse doit être formatée en JSON de manière concise et précise.
-        Le format de la réponse doit être :
-        {
-          "texte": "Texte que le présentateur doit dire.",
-          "pointsEarned": number_of_points_earned,
-          "guessedItems": {
-              "artiste": true_or_false,
-              "titre": true_or_false
-          }
-        }
-        Exemple:
-        {
-          "texte": "Bravo, vous avez trouvé le titre ! L'artiste était "Kenny Loggins".",
-          "pointsEarned": 1,
-          "guessedItems": {
-            "artiste": false,
-            "titre": true
-          }
-        }`
-      },
-      { role: "user", content: concatenatedUserAnswer }
-    ];
     gameState.messageHistory.push(
       { role: "system", content: `
         L'extrait à deviner est ${titre} de ${artiste}. 
