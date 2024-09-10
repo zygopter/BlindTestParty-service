@@ -386,6 +386,109 @@ router.post('/complete-answer', async (req, res) => {
 
 });
 
+// Endpoint pour soumettre une réponse ou une requête
+router.post('/submit-answer-or-request', async (req, res) => {
+  const { gameId, userAnswer } = req.body;
+  const gameState = gameStates[gameId];
+
+  if (!gameState) {
+    logMessage('Game not found', 'error');
+    return res.status(404).json({ error: 'Game not found' });
+  }
+
+  const { artiste, titre } = gameState.currentSong;
+
+  if (!artiste || !titre) {
+    logMessage('No song is currently being played', 'error');
+    return res.status(400).json({ error: 'No song is currently being played.' });
+  }
+
+  console.log('Checking user answer:', userAnswer);
+  console.log('Current song:', gameState.currentSong);
+
+  try {
+    logMessage(`User submitted an answer for song: ${artiste} - ${titre}`);
+    const systemMessage = { role: "system", content: `
+      L'extrait à deviner est ${titre} de ${artiste}.
+      Tu dois évaluer si la réponse est correcte (titre et artiste corrects),
+      partielle (soit l'artiste, soit le titre) ou incorrecte (ni l'artiste, ni le titre).
+      Tu peux autoriser les fautes d'orthographes ou de prononciation dans les réponses.
+      Tu es autorisé à donner des indices mais jamais la réponse, tant que l'utilisateur cherche encore.
+      L'utilisateur a le droit à un indice uniquement, ensuite il doit donner une réponse.
+      Tu dois évaluer et signifier si la réponse est une réponse finale qui termine l'étape.
+      Les cas qui finissent l'étape sont:
+      - l'utilisateur a donné une réponse complète
+      - l'utilisateur a essayé au moins deux réponses à la question
+      - l'utilisateur ne sais pas et veut passer
+      Si tu as déterminé qu'il s'agissait de la réponse finale, tu dois donner le bon résultat,
+      sinon il t'es interdit de donner les réponses.
+
+      La réponse doit être formatée en JSON de manière concise et précise.
+      Le format de la réponse doit être :
+      {
+        "texte": "Texte que le présentateur doit dire.",
+        "evaluated_answer": "complete_or_partial_or_wrong",
+        "guessedItems": {
+            "artiste": true_or_false,
+            "titre": true_or_false
+        },
+        "final_answer": true_or_false
+      }
+      Exemple:
+      {
+        "texte": "Bravo, vous avez trouvé le titre ! L'artiste était "Kenny Loggins".",
+        "evaluated_answer": "partial",
+        "guessedItems": {
+          "artiste": false,
+          "titre": true
+        },
+        "final_answer": true
+      }`
+    };
+    // Is message already in history
+    const isElementInArray = (array, element) => {
+      return array.some(item => item.role === element.role && item.content === element.content);
+    };
+    if (!isElementInArray(gameState.messageHistory, systemMessage)) {
+      console.log('First time here');
+      gameState.messageHistory.push(systemMessage);
+    };
+
+    gameState.messageHistory.push(
+      { role: "user", content: userAnswer }
+    );
+    
+    const gptAnswer = await callChatGPT(gameState.messageHistory);
+    const cleanedGptAnswer = cleanJsonString(gptAnswer);
+    gameState.messageHistory.push(
+      { role: "assistant", content: gptAnswer}
+    );
+
+    // Extraire l'artiste et le titre de la réponse de GPT
+    let parsedAnswer;
+    try {
+      parsedAnswer = JSON.parse(cleanedGptAnswer);
+    } catch (error) {
+      logMessage(`Failed to parse GPT answer as JSON: ${cleanedGptAnswer}`, 'error');
+      return res.status(500).json({ error: 'Failed to parse GPT answer as JSON' });
+    }
+
+    const finalAnswer = parsedAnswer.final_answer;
+
+    if (finalAnswer) {
+      logMessage(`End of this guessing turn: ${titre} - ${artiste}`);
+      return res.json({ message: 'End of turn.', parsedAnswer, isDone: true });
+    } else {
+      logMessage(`Stay in the same guessing turn: ${titre} - ${artiste}`);
+      return res.json({ message: 'Stay in turn.', parsedAnswer, isDone: false });
+    }
+  } catch (error) {
+    logMessage(`Error processing answer: ${error.message}`, 'error');
+    res.status(500).json({ error: 'Failed to process the answer' });
+  }
+
+});
+
 const cleanJsonString = (jsonString) => {
   // Utiliser une expression régulière pour remplacer uniquement les guillemets dans les valeurs
   return jsonString.replace(/"([^"]+)":\s*"([^"]*)"/g, function(match, p1, p2) {
